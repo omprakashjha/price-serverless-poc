@@ -1,61 +1,71 @@
 package price;
 
+import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.URLDecoder;
+import java.io.InputStreamReader;
 
 import com.amazonaws.services.lambda.runtime.Context;
 import com.amazonaws.services.lambda.runtime.RequestHandler;
-import com.amazonaws.services.lambda.runtime.events.S3Event;
+import com.amazonaws.services.lambda.runtime.events.SQSEvent;
+import com.amazonaws.services.lambda.runtime.events.SQSEvent.SQSMessage;
 import com.amazonaws.services.s3.AmazonS3;
-import com.amazonaws.services.s3.AmazonS3Client;
-import com.amazonaws.services.s3.event.S3EventNotification.S3EventNotificationRecord;
+import com.amazonaws.services.s3.AmazonS3ClientBuilder;
 import com.amazonaws.services.s3.model.GetObjectRequest;
-import com.amazonaws.services.s3.model.ObjectMetadata;
 import com.amazonaws.services.s3.model.S3Object;
+import com.amazonaws.services.sqs.model.AmazonSQSException;
 
 public class PriceProcessorHandler implements
-        RequestHandler<S3Event, String> {
+        RequestHandler<SQSEvent, String> {
 
-    public String handleRequest(S3Event s3event, Context context) {
+    public String handleRequest(SQSEvent sqsEvent, Context context) {
         try {
-            S3EventNotificationRecord record = s3event.getRecords().get(0);
+            String srcBucket = "price-output";
+            for(SQSMessage msg : sqsEvent.getRecords()){
+                System.out.println("Message is: " + msg.getBody());
 
-            String srcBucket = record.getS3().getBucket().getName();
-            // Object key may have spaces or unicode non-ASCII characters.
-            String srcKey = record.getS3().getObject().getKey()
-                    .replace('+', ' ');
-            srcKey = URLDecoder.decode(srcKey, "UTF-8");
+                // retrieve the file from S3 into a stream
+                AmazonS3 s3Client = AmazonS3ClientBuilder.defaultClient();
+                S3Object s3Object = s3Client.getObject(new GetObjectRequest(
+                        srcBucket, msg.getBody()));
 
-            System.out.println("Reading file: " + srcBucket + "/" + srcKey);
-
-            String dstBucket = "price-output";
-            String dstKey = "processed-" + srcKey;
-
-            // Sanity check: validate that source and destination are different
-            // buckets.
-            if (srcBucket.equals(dstBucket)) {
-                System.out
-                        .println("Destination bucket must not match source bucket.");
-                return "";
+                
+                System.out.println("Message content is: " + getStringFromInputStream(s3Object.getObjectContent().getDelegateStream()));
             }
 
-            // Download the file from S3 into a stream
-            AmazonS3 s3Client = new AmazonS3Client();
-            S3Object s3Object = s3Client.getObject(new GetObjectRequest(
-                    srcBucket, srcKey));
-
-            InputStream is = s3Object.getObjectContent();
-
-            ObjectMetadata meta = new ObjectMetadata();
-            meta.setContentType("csv");
-
-            // Uploading to S3 destination bucket
-            System.out.println("Writing to: " + dstBucket + "/" + dstKey);
-            s3Client.putObject(dstBucket, dstKey, is, meta);
             return "Ok";
-        } catch (IOException e) {
-            throw new RuntimeException(e);
+        } catch (AmazonSQSException e) {
+            throw e;
         }
     }
+
+    // convert InputStream to String
+	private static String getStringFromInputStream(InputStream is) {
+
+		BufferedReader br = null;
+		StringBuilder sb = new StringBuilder();
+
+		String line;
+		try {
+
+			br = new BufferedReader(new InputStreamReader(is));
+			while ((line = br.readLine()) != null) {
+				sb.append(line);
+			}
+
+		} catch (IOException e) {
+			e.printStackTrace();
+		} finally {
+			if (br != null) {
+				try {
+					br.close();
+				} catch (IOException e) {
+					e.printStackTrace();
+				}
+			}
+		}
+
+		return sb.toString();
+
+	}
 }
