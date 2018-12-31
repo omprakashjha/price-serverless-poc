@@ -27,6 +27,8 @@ public class PriceReceiverHandler implements
         try {
             S3EventNotificationRecord record = s3event.getRecords().get(0);
 
+	    System.out.println("This program is deployed using CI/CD");
+
             String srcBucket = record.getS3().getBucket().getName();
             // Object key may have spaces or unicode non-ASCII characters.
             String srcKey = record.getS3().getObject().getKey()
